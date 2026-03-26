@@ -62,19 +62,19 @@ jobs:
           if [[ ! -f "${MANIFEST_PATH}" ]]; then
             mkdir -p "$(dirname "${MANIFEST_PATH}")"
             cat > "${MANIFEST_PATH}" <<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<manifest>
-  <remote name="github" fetch=".." />
-  <default remote="github" sync-c="true" />
-  <project path="scripts" name="yajnab/kernel_builder" revision="refs/heads/arkos">
-    <linkfile src="kernel_arkos.sh" dest="kernel_arkos.sh" />
-    <linkfile src="rescr.sh" dest="rescr.sh" />
-  </project>
-  <project path="kernel" name="yajnab/arkos_kernel" revision="refs/heads/rg351" />
-  <project path="arkos4clone" name="yajnab/arkos4clone" revision="refs/heads/main" />
-  <project path="device_files" name="ZyoungInc/r36ultra-linux" revision="refs/heads/main" />
-</manifest>
-          XML
+                <?xml version="1.0" encoding="UTF-8"?>
+                <manifest>
+                  <remote name="github" fetch=".." />
+                  <default remote="github" sync-c="true" />
+                  <project path="scripts" name="yajnab/kernel_builder" revision="refs/heads/arkos">
+                    <linkfile src="kernel_arkos.sh" dest="kernel_arkos.sh" />
+                    <linkfile src="rescr.sh" dest="rescr.sh" />
+                  </project>
+                  <project path="kernel" name="yajnab/arkos_kernel" revision="refs/heads/rg351" />
+                  <project path="arkos4clone" name="yajnab/arkos4clone" revision="refs/heads/main" />
+                  <project path="device_files" name="ZyoungInc/r36ultra-linux" revision="refs/heads/main" />
+                </manifest>
+              XML
           fi
 
           python3 - "${MANIFEST_PATH}" > .github/artifacts/projects.tsv <<'PY'
