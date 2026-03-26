@@ -17,7 +17,6 @@ jobs:
       PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.002
       PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.003
       TOOLCHAIN_URL: https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
-      MANIFEST_PATH: .repo/manifests/default.xml
       RELEASE_TAG_PREFIX: r36ultra-build
 
     steps:
@@ -54,71 +53,43 @@ jobs:
           tar -xJf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_ROOT}"
           echo "${TOOLCHAIN_ROOT}/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin" >> "${GITHUB_PATH}"
 
-      - name: Prepare workspace from manifest
+      - name: Prepare workspace from git clones
         run: |
           set -euo pipefail
           mkdir -p .github/artifacts
 
-          if [[ ! -f "${MANIFEST_PATH}" ]]; then
-            mkdir -p "$(dirname "${MANIFEST_PATH}")"
-            cat > "${MANIFEST_PATH}" <<'XML'
-                <?xml version="1.0" encoding="UTF-8"?>
-                <manifest>
-                  <remote name="github" fetch=".." />
-                  <default remote="github" sync-c="true" />
-                  <project path="scripts" name="yajnab/kernel_builder" revision="refs/heads/arkos">
-                    <linkfile src="kernel_arkos.sh" dest="kernel_arkos.sh" />
-                    <linkfile src="rescr.sh" dest="rescr.sh" />
-                  </project>
-                  <project path="kernel" name="yajnab/arkos_kernel" revision="refs/heads/rg351" />
-                  <project path="arkos4clone" name="yajnab/arkos4clone" revision="refs/heads/main" />
-                  <project path="device_files" name="ZyoungInc/r36ultra-linux" revision="refs/heads/main" />
-                </manifest>
-              XML
-          fi
-
-          python3 - "${MANIFEST_PATH}" > .github/artifacts/projects.tsv <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-          tree = ET.parse(sys.argv[1])
-          root = tree.getroot()
-          for project in root.findall("project"):
-              path = (project.get("path") or "").strip()
-              name = (project.get("name") or "").strip()
-              rev = (project.get("revision") or "").strip()
-              if path and name:
-                  print(f"{path}\t{name}\t{rev}")
-          PY
-
-          while IFS=$'\t' read -r repo_path repo_name repo_rev; do
-            [[ -z "${repo_path}" || -z "${repo_name}" ]] && continue
-            branch_arg=()
-            if [[ "${repo_rev}" == refs/heads/* ]]; then
-              branch_arg=(--branch "${repo_rev#refs/heads/}")
-            fi
+          clone_or_update() {
+            local repo_path="$1"
+            local repo_url="$2"
+            local branch="$3"
 
             if [[ -d "${repo_path}/.git" ]]; then
               git -C "${repo_path}" fetch --all --tags --prune
-              if [[ ${#branch_arg[@]} -eq 2 ]]; then
-                git -C "${repo_path}" checkout -B "${branch_arg[1]}" "origin/${branch_arg[1]}"
-                git -C "${repo_path}" pull --ff-only
-              fi
+              git -C "${repo_path}" checkout -B "${branch}" "origin/${branch}"
+              git -C "${repo_path}" pull --ff-only
             else
-              git clone "${branch_arg[@]}" "https://github.com/${repo_name}.git" "${repo_path}"
+              git clone --branch "${branch}" "${repo_url}" "${repo_path}"
             fi
-          done < .github/artifacts/projects.tsv
+          }
 
+          # Repos cloned into the same directories as the old XML manifest.
+          clone_or_update "scripts" "https://github.com/yajnab/kernel_builder.git" "arkos"
+          clone_or_update "kernel" "https://github.com/yajnab/arkos_kernel.git" "rg351"
+          clone_or_update "arkos4clone" "https://github.com/yajnab/arkos4clone.git" "main"
+          clone_or_update "device_files" "https://github.com/ZyoungInc/r36ultra-linux.git" "main"
+
+          # Provide the same entrypoints the XML `linkfile` used to create.
           [[ -d scripts ]] && ln -sf scripts/kernel_arkos.sh kernel_arkos.sh || true
           [[ -d scripts ]] && ln -sf scripts/rescr.sh rescr.sh || true
           [[ -f kernel_arkos.sh ]] && chmod +x kernel_arkos.sh || true
 
-          while IFS=$'\t' read -r repo_path _ _; do
-            [[ -z "${repo_path}" ]] && continue
+          # Ensure any submodules are present.
+          for repo_path in scripts kernel arkos4clone device_files; do
             if [[ -d "${repo_path}/.git" ]]; then
               git -C "${repo_path}" submodule sync --recursive || true
               git -C "${repo_path}" submodule update --init --recursive
             fi
-          done < .github/artifacts/projects.tsv
+          done
 
       - name: Download and extract base ArkOS image
         run: |
