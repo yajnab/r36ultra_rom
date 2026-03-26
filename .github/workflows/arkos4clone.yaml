@@ -1,0 +1,201 @@
+name: Build ArkOS4Clone R36 Ultra
+
+on:
+  push:
+    branches:
+      - arkos4clone
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-22.04
+    env:
+      PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.001
+      PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.002
+      PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.003
+      TOOLCHAIN_URL: https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
+      MANIFEST_PATH: .repo/manifests/default.xml
+      RELEASE_TAG_PREFIX: r36ultra-build
+
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            wget \
+            p7zip-full \
+            xz-utils \
+            unzip \
+            rsync \
+            parted \
+            u-boot-tools \
+            qemu-user-static \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev
+
+      - name: Download and install Linaro toolchain
+        run: |
+          set -euo pipefail
+          TOOLCHAIN_ROOT="${HOME}/toolchains"
+          TOOLCHAIN_ARCHIVE="${RUNNER_TEMP:-/tmp}/$(basename "${TOOLCHAIN_URL}")"
+          mkdir -p "${TOOLCHAIN_ROOT}"
+          wget -q --show-progress -O "${TOOLCHAIN_ARCHIVE}" "${TOOLCHAIN_URL}"
+          tar -xJf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_ROOT}"
+          echo "${TOOLCHAIN_ROOT}/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin" >> "${GITHUB_PATH}"
+
+      - name: Prepare workspace from manifest
+        run: |
+          set -euo pipefail
+          mkdir -p .github/artifacts
+
+          if [[ ! -f "${MANIFEST_PATH}" ]]; then
+            mkdir -p "$(dirname "${MANIFEST_PATH}")"
+            cat > "${MANIFEST_PATH}" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="github" fetch=".." />
+  <default remote="github" sync-c="true" />
+  <project path="scripts" name="yajnab/kernel_builder" revision="refs/heads/arkos">
+    <linkfile src="kernel_arkos.sh" dest="kernel_arkos.sh" />
+    <linkfile src="rescr.sh" dest="rescr.sh" />
+  </project>
+  <project path="kernel" name="yajnab/arkos_kernel" revision="refs/heads/rg351" />
+  <project path="arkos4clone" name="yajnab/arkos4clone" revision="refs/heads/main" />
+  <project path="device_files" name="ZyoungInc/r36ultra-linux" revision="refs/heads/main" />
+</manifest>
+          XML
+          fi
+
+          python3 - "${MANIFEST_PATH}" > .github/artifacts/projects.tsv <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          tree = ET.parse(sys.argv[1])
+          root = tree.getroot()
+          for project in root.findall("project"):
+              path = (project.get("path") or "").strip()
+              name = (project.get("name") or "").strip()
+              rev = (project.get("revision") or "").strip()
+              if path and name:
+                  print(f"{path}\t{name}\t{rev}")
+          PY
+
+          while IFS=$'\t' read -r repo_path repo_name repo_rev; do
+            [[ -z "${repo_path}" || -z "${repo_name}" ]] && continue
+            branch_arg=()
+            if [[ "${repo_rev}" == refs/heads/* ]]; then
+              branch_arg=(--branch "${repo_rev#refs/heads/}")
+            fi
+
+            if [[ -d "${repo_path}/.git" ]]; then
+              git -C "${repo_path}" fetch --all --tags --prune
+              if [[ ${#branch_arg[@]} -eq 2 ]]; then
+                git -C "${repo_path}" checkout -B "${branch_arg[1]}" "origin/${branch_arg[1]}"
+                git -C "${repo_path}" pull --ff-only
+              fi
+            else
+              git clone "${branch_arg[@]}" "https://github.com/${repo_name}.git" "${repo_path}"
+            fi
+          done < .github/artifacts/projects.tsv
+
+          [[ -d scripts ]] && ln -sf scripts/kernel_arkos.sh kernel_arkos.sh || true
+          [[ -d scripts ]] && ln -sf scripts/rescr.sh rescr.sh || true
+          [[ -f kernel_arkos.sh ]] && chmod +x kernel_arkos.sh || true
+
+          while IFS=$'\t' read -r repo_path _ _; do
+            [[ -z "${repo_path}" ]] && continue
+            if [[ -d "${repo_path}/.git" ]]; then
+              git -C "${repo_path}" submodule sync --recursive || true
+              git -C "${repo_path}" submodule update --init --recursive
+            fi
+          done < .github/artifacts/projects.tsv
+
+      - name: Download and extract base ArkOS image
+        run: |
+          set -euo pipefail
+          WORK_DIR="${RUNNER_TEMP:-/tmp}/base-arkos"
+          mkdir -p "${WORK_DIR}" .github/artifacts
+
+          wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_001_URL}")" "${PART_001_URL}"
+          wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_002_URL}")" "${PART_002_URL}"
+          wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_003_URL}")" "${PART_003_URL}"
+
+          pushd "${WORK_DIR}" >/dev/null
+          7z x -y "$(basename "${PART_001_URL}")"
+          IMG_XZ="$(ls -1 *.img.xz | head -n1)"
+          [[ -n "${IMG_XZ}" ]] || { echo "No .img.xz extracted"; exit 1; }
+          xz -dk "${IMG_XZ}"
+          BASE_IMG="${WORK_DIR}/${IMG_XZ%.xz}"
+          [[ -f "${BASE_IMG}" ]] || { echo "No base .img found"; exit 1; }
+          popd >/dev/null
+
+          cp -f "${BASE_IMG}" "./$(basename "${BASE_IMG}")"
+          printf '%s' "$(pwd)/$(basename "${BASE_IMG}")" > .github/artifacts/base_img_path.txt
+
+      - name: Build kernel and stage Arkbuild content
+        run: |
+          set -euo pipefail
+          [[ -x ./kernel_arkos.sh ]] || { echo "kernel_arkos.sh missing or not executable"; exit 1; }
+          ./kernel_arkos.sh
+
+          KERNEL_IMAGE_SRC="$(pwd)/kernel/arch/arm64/boot/Image"
+          KERNEL_IMAGE_DST="$(pwd)/arkos4clone/consoles/kernel/common/Image"
+          [[ -f "${KERNEL_IMAGE_SRC}" ]] || { echo "Kernel Image not found"; exit 1; }
+          mkdir -p "$(dirname "${KERNEL_IMAGE_DST}")"
+          cp -f "${KERNEL_IMAGE_SRC}" "${KERNEL_IMAGE_DST}"
+
+          ARKBUILD_ROOT="$(pwd)/Arkbuild"
+          mkdir -p "${ARKBUILD_ROOT}"
+          # Some branches may not ship the 720P logo; fall back to the first available resolution.
+          LOGO_SRC=""
+          for d in 720P 768P 540P 480P 854x480P; do
+            if [[ -f "$(pwd)/arkos4clone/consoles/logo/${d}/logo.bmp" ]]; then
+              LOGO_SRC="$(pwd)/arkos4clone/consoles/logo/${d}/logo.bmp"
+              break
+            fi
+          done
+          [[ -n "${LOGO_SRC}" ]] || { echo "No logo.bmp found under arkos4clone/consoles/logo/*/logo.bmp"; exit 1; }
+          cp -f "${LOGO_SRC}" "${ARKBUILD_ROOT}/"
+          echo "Using logo: ${LOGO_SRC}"
+          cp -a "$(pwd)/arkos4clone/consoles/r36ultra/." "${ARKBUILD_ROOT}/"
+
+      - name: Build final R36 Ultra image
+        run: |
+          set -euo pipefail
+          [[ -f .github/artifacts/base_img_path.txt ]] || { echo "Missing base image path"; exit 1; }
+          BASE_IMG="$(tr -d '\r\n' < .github/artifacts/base_img_path.txt)"
+          [[ -f "${BASE_IMG}" ]] || { echo "Base image not found: ${BASE_IMG}"; exit 1; }
+
+          chmod +x ./arkos4clone/build_image.sh
+          sudo ./arkos4clone/build_image.sh "${BASE_IMG}" "${RUNNER_TEMP:-/tmp}/arkos-build-work"
+
+          FINAL_IMAGE="$(ls -1t ./arkos4clone/*4Clone-yajnab-*.img.xz | head -n1)"
+          [[ -n "${FINAL_IMAGE}" && -f "${FINAL_IMAGE}" ]] || { echo "Final image not found"; exit 1; }
+          sudo chown "${USER}:${USER}" "${FINAL_IMAGE}"
+          chmod 0644 "${FINAL_IMAGE}"
+          printf '%s' "${FINAL_IMAGE}" > .github/artifacts/final_image_path.txt
+
+      - name: Prepare release metadata
+        run: |
+          OUTPUT_FILE="$(tr -d '\r\n' < .github/artifacts/final_image_path.txt)"
+          [[ -r "${OUTPUT_FILE}" ]] || { echo "Output file is not readable: ${OUTPUT_FILE}"; exit 1; }
+          echo "OUTPUT_FILE=${OUTPUT_FILE}" >> "${GITHUB_ENV}"
+          echo "RELEASE_TAG=${RELEASE_TAG_PREFIX}-$(date +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
+
+      - name: Publish release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: R36 Ultra Build ${{ env.RELEASE_TAG }}
+          body: Automated ArkOS4Clone R36 Ultra build from workflow.
+          files: ${{ env.OUTPUT_FILE }}
