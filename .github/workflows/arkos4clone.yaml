@@ -149,7 +149,7 @@ jobs:
 
           ccache --show-stats || true
 
-          KERNEL_IMAGE_SRC="$(pwd)/kernel_out/arch/arm64/boot/Image"
+          KERNEL_IMAGE_SRC="$(pwd)/kernel/arch/arm64/boot/Image"
           KERNEL_IMAGE_DST="$(pwd)/arkos4clone/consoles/kernel/common/Image"
           [[ -f "${KERNEL_IMAGE_SRC}" ]] || { echo "Kernel Image not found"; exit 1; }
           mkdir -p "$(dirname "${KERNEL_IMAGE_DST}")"
