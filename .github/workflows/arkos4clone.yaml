@@ -142,33 +142,17 @@ jobs:
           printf '%s' "$(pwd)/$(basename "${BASE_IMG}")" > .github/artifacts/base_img_path.txt
 
       - name: Build kernel and stage Arkbuild content
+        env:
+          UNIT: r36ultra
+          CHIPSET: rk3326
+          DEVICE_FILES_DIR: ${{ github.workspace }}/device_files
         run: |
           set -euo pipefail
           [[ -x ./kernel_arkos.sh ]] || { echo "kernel_arkos.sh missing or not executable"; exit 1; }
+          chmod +x .github/scripts/ci-stage-kernel-artifacts.sh
           ./kernel_arkos.sh
-
+          .github/scripts/ci-stage-kernel-artifacts.sh
           ccache --show-stats || true
-
-          KERNEL_IMAGE_SRC="$(pwd)/kernel/arch/arm64/boot/Image"
-          KERNEL_IMAGE_DST="$(pwd)/arkos4clone/consoles/kernel/common/Image"
-          [[ -f "${KERNEL_IMAGE_SRC}" ]] || { echo "Kernel Image not found"; exit 1; }
-          mkdir -p "$(dirname "${KERNEL_IMAGE_DST}")"
-          cp -f "${KERNEL_IMAGE_SRC}" "${KERNEL_IMAGE_DST}"
-
-          ARKBUILD_ROOT="$(pwd)/Arkbuild"
-          mkdir -p "${ARKBUILD_ROOT}"
-          # Some branches may not ship the 720P logo; fall back to the first available resolution.
-          LOGO_SRC=""
-          for d in 720P 768P 540P 480P 854x480P; do
-            if [[ -f "$(pwd)/arkos4clone/consoles/logo/${d}/logo.bmp" ]]; then
-              LOGO_SRC="$(pwd)/arkos4clone/consoles/logo/${d}/logo.bmp"
-              break
-            fi
-          done
-          [[ -n "${LOGO_SRC}" ]] || { echo "No logo.bmp found under arkos4clone/consoles/logo/*/logo.bmp"; exit 1; }
-          cp -f "${LOGO_SRC}" "${ARKBUILD_ROOT}/"
-          echo "Using logo: ${LOGO_SRC}"
-          cp -a "$(pwd)/arkos4clone/consoles/r36ultra/." "${ARKBUILD_ROOT}/"
 
       - name: Save kernel ccache
         uses: actions/cache/save@v4
