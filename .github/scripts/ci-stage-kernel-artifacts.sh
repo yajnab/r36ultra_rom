@@ -24,6 +24,27 @@ DTB_GLOB="*${UNIT}*.dtb"
 
 log() { echo "[ci-stage-kernel-artifacts] $*"; }
 
+# Return 0 if both paths refer to the same existing file (symlinks resolved).
+same_file_path() {
+  local a="$1" b="$2"
+  [[ -e "$a" && -e "$b" ]] || return 1
+  local ra rb
+  ra="$(realpath "$a" 2>/dev/null)" || return 1
+  rb="$(realpath "$b" 2>/dev/null)" || return 1
+  [[ "$ra" == "$rb" ]]
+}
+
+# GNU install fails with "are the same file" when src and dst are identical.
+install_dtb_unless_same() {
+  local src="$1" dst="$2"
+  [[ -e "$src" ]] || { echo "ERROR: missing $src"; return 1; }
+  if [[ -e "$dst" ]] && same_file_path "$src" "$dst"; then
+    log "Skip install (already same file): $dst"
+    return 0
+  fi
+  install -m0644 "$src" "$dst"
+}
+
 fix_owner() {
   local path="$1"
   [[ -e "$path" ]] || return 0
@@ -80,18 +101,19 @@ shopt -u nullglob
 if [[ ${#dtb_list[@]} -eq 0 ]]; then
   ROCKCHIP_DTS="${KERNEL_DIR}/arch/arm64/boot/dts/rockchip"
   shopt -s nullglob
-  dtb_list=( "${ROCKCHIP_DTS}/"${DTB_GLOB} )
+  # Glob must be anchored in the target dir: do not use "${dir}/"${DTB_GLOB} (unsafe).
+  dtb_list=( "${ROCKCHIP_DTS}/"*${UNIT}*.dtb )
   shopt -u nullglob
 
   if [[ ${#dtb_list[@]} -eq 0 && -d "${ARKBUILD_DIR}/boot" ]]; then
     shopt -s nullglob
-    dtb_list=( "${ARKBUILD_DIR}/boot/"${DTB_GLOB} )
+    dtb_list=( "${ARKBUILD_DIR}/boot/"*${UNIT}*.dtb )
     shopt -u nullglob
   fi
 
   if [[ ${#dtb_list[@]} -eq 0 && -n "${DEVICE_FILES_DIR:-}" && -d "${DEVICE_FILES_DIR}" ]]; then
     shopt -s nullglob
-    dtb_list=( "${DEVICE_FILES_DIR}/"${DTB_GLOB} )
+    dtb_list=( "${DEVICE_FILES_DIR}/"*${UNIT}*.dtb )
     shopt -u nullglob
     [[ ${#dtb_list[@]} -gt 0 ]] && log "Using DTBs from DEVICE_FILES_DIR=${DEVICE_FILES_DIR} (${DTB_GLOB})"
   fi
@@ -111,9 +133,11 @@ shopt -u nullglob
 if [[ ${#already_in_common[@]} -eq 0 ]]; then
   for f in "${dtb_list[@]}"; do
     base="$(basename "$f")"
-    install -m0644 "$f" "${DEVICE_DIR}/${base}"
-    install -m0644 "$f" "${COMMON_DIR}/${base}"
-    log "Staged DTB (from kernel/fallback): ${COMMON_DIR}/${base}"
+    dest_dev="${DEVICE_DIR}/${base}"
+    dest_com="${COMMON_DIR}/${base}"
+    install_dtb_unless_same "$f" "$dest_dev"
+    install_dtb_unless_same "$f" "$dest_com"
+    log "Staged DTB (from kernel/fallback): ${dest_com}"
   done
 else
   log "DTB(s) present under ${COMMON_DIR}/ after mirror ($(printf '%s ' "${already_in_common[@]}"))"
