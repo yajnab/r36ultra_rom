@@ -4,7 +4,16 @@ on:
   push:
     branches:
       - arkos4clone
+      - darkos4clone
   workflow_dispatch:
+    inputs:
+      base_image:
+        description: Base split image (ArkOS4Clone vs dArkOS4Clone release parts)
+        type: choice
+        default: arkos
+        options:
+          - arkos
+          - darkos
 
 permissions:
   contents: write
@@ -13,9 +22,12 @@ jobs:
   build-and-release:
     runs-on: ubuntu-22.04
     env:
-      PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.001
-      PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.002
-      PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.003
+      ARKOS_PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.001
+      ARKOS_PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.002
+      ARKOS_PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.003
+      DARKOS_PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.001
+      DARKOS_PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.002
+      DARKOS_PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.003
       TOOLCHAIN_URL: https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
       RELEASE_TAG_PREFIX: r36ultra-build
       CCACHE_DIR: /home/runner/.ccache
@@ -124,6 +136,29 @@ jobs:
           set -euo pipefail
           WORK_DIR="${RUNNER_TEMP:-/tmp}/base-arkos"
           mkdir -p "${WORK_DIR}" .github/artifacts
+
+          # dArkOS needs the dArkOS4Clone split release; ArkOS uses ArkOS4Clone parts.
+          # Manual runs: base_image input wins (so darkos4clone + arkos can test ArkOS parts).
+          # Push: branch darkos4clone implies dArkOS parts.
+          USE_DARKOS=0
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ inputs.base_image }}" == "darkos" ]]; then
+              USE_DARKOS=1
+            fi
+          elif [[ "${GITHUB_REF_NAME}" == "darkos4clone" ]]; then
+            USE_DARKOS=1
+          fi
+          if (( USE_DARKOS )); then
+            PART_001_URL="${DARKOS_PART_001_URL}"
+            PART_002_URL="${DARKOS_PART_002_URL}"
+            PART_003_URL="${DARKOS_PART_003_URL}"
+            echo "Using dArkOS base image parts (split .7z)"
+          else
+            PART_001_URL="${ARKOS_PART_001_URL}"
+            PART_002_URL="${ARKOS_PART_002_URL}"
+            PART_003_URL="${ARKOS_PART_003_URL}"
+            echo "Using ArkOS base image parts (split .7z)"
+          fi
 
           wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_001_URL}")" "${PART_001_URL}"
           wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_002_URL}")" "${PART_002_URL}"
