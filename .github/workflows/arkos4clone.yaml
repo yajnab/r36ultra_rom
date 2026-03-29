@@ -1,9 +1,9 @@
-name: Build dArkOS4Clone R36 Ultra
+name: Build arkos4clone R36 Ultra
 
 on:
   push:
     branches:
-      - darkos4clone
+      - arkos4clone
   workflow_dispatch:
 
 permissions:
@@ -13,9 +13,9 @@ jobs:
   build-and-release:
     runs-on: ubuntu-22.04
     env:
-      PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.001
-      PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.002
-      PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.003
+      PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.001
+      PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.002
+      PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.003
       TOOLCHAIN_URL: https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
       RELEASE_TAG_PREFIX: r36ultra-build
       CCACHE_DIR: /home/runner/.ccache
@@ -143,10 +143,10 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-aarch64-
 
-      - name: Download and extract base dArkOS image
+      - name: Download and extract base image (arkos4clone / ArkOS4Clone output)
         run: |
           set -euo pipefail
-          WORK_DIR="${RUNNER_TEMP:-/tmp}/base-darkos"
+          WORK_DIR="${RUNNER_TEMP:-/tmp}/base-arkos4clone"
           mkdir -p "${WORK_DIR}" .github/artifacts
 
           wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_001_URL}")" "${PART_001_URL}"
@@ -236,6 +236,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: R36 Ultra dArkOS Build ${{ env.RELEASE_TAG }}
-          body: Automated dArkOS4Clone R36 Ultra build from workflow.
+          name: R36 Ultra arkos4clone Build ${{ env.RELEASE_TAG }}
+          body: Automated arkos4clone (ArkOS4Clone) R36 Ultra build from workflow.
           files: ${{ env.OUTPUT_FILES }}
