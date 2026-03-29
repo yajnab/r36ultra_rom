@@ -1,19 +1,10 @@
-name: Build ArkOS4Clone R36 Ultra
+name: Build dArkOS4Clone R36 Ultra
 
 on:
   push:
     branches:
-      - arkos4clone
       - darkos4clone
   workflow_dispatch:
-    inputs:
-      base_image:
-        description: Base split image (ArkOS4Clone vs dArkOS4Clone release parts)
-        type: choice
-        default: arkos
-        options:
-          - arkos
-          - darkos
 
 permissions:
   contents: write
@@ -22,12 +13,9 @@ jobs:
   build-and-release:
     runs-on: ubuntu-22.04
     env:
-      ARKOS_PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.001
-      ARKOS_PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.002
-      ARKOS_PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/ArkOS4Clone-03132026.img.xz.7z.003
-      DARKOS_PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.001
-      DARKOS_PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.002
-      DARKOS_PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.003
+      PART_001_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.001
+      PART_002_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.002
+      PART_003_URL: https://github.com/lcdyk0517/arkos4clone/releases/download/20260324/dArkOS4Clone-03132026.img.xz.7z.003
       TOOLCHAIN_URL: https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
       RELEASE_TAG_PREFIX: r36ultra-build
       CCACHE_DIR: /home/runner/.ccache
@@ -56,6 +44,18 @@ jobs:
             libssl-dev \
             libelf-dev \
             ccache
+
+      # Must run before the toolchain is added to GITHUB_PATH so /usr/lib/ccache wrappers win over
+      # the real aarch64-linux-gnu-gcc in the Linaro bin directory.
+      - name: Configure ccache
+        run: |
+          set -euo pipefail
+          echo "/usr/lib/ccache" >> "${GITHUB_PATH}"
+          mkdir -p "${CCACHE_DIR}"
+          ccache --version
+          ccache --max-size=10G
+          ccache --zero-stats || true
+          ccache --show-config || true
 
       - name: Download and install Linaro toolchain
         run: |
@@ -105,15 +105,27 @@ jobs:
             fi
           done
 
-      - name: Configure ccache
+      # kernel_builder clone may lag behind; ensure ccache wraps the cross compiler until upstream
+      # always sets CROSS_COMPILE (scripts/kernel_arkos.sh does when ccache is installed).
+      - name: Ensure kernel build uses ccache
         run: |
           set -euo pipefail
-          echo "/usr/lib/ccache" >> "${GITHUB_PATH}"
-          mkdir -p "${CCACHE_DIR}"
-          ccache --version
-          ccache --max-size=10G
-          ccache --zero-stats || true
-          ccache --show-config || true
+          f="${GITHUB_WORKSPACE}/scripts/kernel_arkos.sh"
+          [[ -f "${f}" ]] || { echo "scripts/kernel_arkos.sh missing"; exit 1; }
+          if [[ -n "${CCACHE_DISABLE:-}" ]]; then
+            echo "CCACHE_DISABLE set; skip."
+            exit 0
+          fi
+          if grep -qF 'ccache aarch64-linux-gnu-' "${f}"; then
+            echo "kernel_arkos.sh already uses ccache for CROSS_COMPILE."
+            exit 0
+          fi
+          if grep -qE '^[[:space:]]*export CROSS_COMPILE=aarch64-linux-gnu-$' "${f}"; then
+            sed -i 's/^\([[:space:]]*\)export CROSS_COMPILE=aarch64-linux-gnu-$/\1export CROSS_COMPILE="ccache aarch64-linux-gnu-"/' "${f}"
+            echo "Applied ccache CROSS_COMPILE (fallback for older kernel_builder)."
+          else
+            echo "::warning::Could not patch CROSS_COMPILE for ccache — check scripts/kernel_arkos.sh"
+          fi
 
       - name: Compute cache keys
         id: cache-keys
@@ -131,34 +143,11 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-aarch64-
 
-      - name: Download and extract base ArkOS image
+      - name: Download and extract base dArkOS image
         run: |
           set -euo pipefail
-          WORK_DIR="${RUNNER_TEMP:-/tmp}/base-arkos"
+          WORK_DIR="${RUNNER_TEMP:-/tmp}/base-darkos"
           mkdir -p "${WORK_DIR}" .github/artifacts
-
-          # dArkOS needs the dArkOS4Clone split release; ArkOS uses ArkOS4Clone parts.
-          # Manual runs: base_image input wins (so darkos4clone + arkos can test ArkOS parts).
-          # Push: branch darkos4clone implies dArkOS parts.
-          USE_DARKOS=0
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if [[ "${{ inputs.base_image }}" == "darkos" ]]; then
-              USE_DARKOS=1
-            fi
-          elif [[ "${GITHUB_REF_NAME}" == "darkos4clone" ]]; then
-            USE_DARKOS=1
-          fi
-          if (( USE_DARKOS )); then
-            PART_001_URL="${DARKOS_PART_001_URL}"
-            PART_002_URL="${DARKOS_PART_002_URL}"
-            PART_003_URL="${DARKOS_PART_003_URL}"
-            echo "Using dArkOS base image parts (split .7z)"
-          else
-            PART_001_URL="${ARKOS_PART_001_URL}"
-            PART_002_URL="${ARKOS_PART_002_URL}"
-            PART_003_URL="${ARKOS_PART_003_URL}"
-            echo "Using ArkOS base image parts (split .7z)"
-          fi
 
           wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_001_URL}")" "${PART_001_URL}"
           wget -q --show-progress -O "${WORK_DIR}/$(basename "${PART_002_URL}")" "${PART_002_URL}"
@@ -247,6 +236,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: R36 Ultra Build ${{ env.RELEASE_TAG }}
-          body: Automated ArkOS4Clone R36 Ultra build from workflow.
+          name: R36 Ultra dArkOS Build ${{ env.RELEASE_TAG }}
+          body: Automated dArkOS4Clone R36 Ultra build from workflow.
           files: ${{ env.OUTPUT_FILES }}
